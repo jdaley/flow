@@ -41,10 +41,21 @@ let extract_external () =
   let path = (Filename.dirname Sys.executable_name) ^ "/flowlib.tar.gz" in
   if Sys.file_exists path then Some (extract (Sys_utils.cat path)) else None
 
+let local_lib () =
+  let path = (Filename.dirname Sys.executable_name) ^ "\\lib" in
+  if Sys.file_exists path && Sys.is_directory path && Sys.file_exists (path ^ "\\core.js")
+    then Some (Path.mk_path path)
+    else begin
+      print_endline ("Warning: Embedded flowlib.tar.gz not implemented in Windows. Copy lib folder to " ^ path);
+      None
+    end
+
 let get_flowlib_root_impl () =
   match extract_embedded () with
   | Some path -> Some path
-  | None -> extract_external ()
+  | None -> match extract_external () with
+    | Some path -> Some path
+    | None -> local_lib ()
 
 (* We want this to be idempotent so that later code can check if a given file
  * came from the flowlib unarchive directory or not, to provide better error
