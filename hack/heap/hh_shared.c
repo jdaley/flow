@@ -89,18 +89,93 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef _WIN32
 #include <sys/errno.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#endif
+
 #include <unistd.h>
 
 #ifndef NO_LZ4
 #include <lz4.h>
 #include <lz4hc.h>
 #endif
+
+#ifdef _WIN32
+
+value hh_heap_size() {
+  CAMLparam0();
+  CAMLreturn(Val_long(0));
+}
+
+void hh_shared_init() {}
+
+void hh_save(value out_filename) {
+  CAMLparam1(out_filename);
+  CAMLreturn0;
+}
+
+void hh_load(value in_filename) {
+  CAMLparam1(in_filename);
+  CAMLreturn0;
+}
+
+void hh_worker_init() {}
+
+value hh_counter_next() {
+  CAMLparam0();
+  CAMLlocal1(result);
+  result = Val_long(0);
+  CAMLreturn(result);
+}
+
+void hh_shared_store(value data) {}
+
+value hh_shared_load() {
+  CAMLparam0();
+  CAMLlocal1(result);
+  result = caml_alloc_string(0);
+  CAMLreturn(result);
+}
+
+void hh_shared_clear() {}
+
+void hh_add_dep(value ocaml_dep) {}
+
+value hh_get_dep(value dep) {
+  CAMLparam1(dep);
+  CAMLlocal1(result);
+  result = Val_int(0);
+  CAMLreturn(result);
+}
+
+void hh_call_after_init() {}
+
+void hh_collect() {}
+
+void hh_add(value key, value data) {}
+
+value hh_mem(value key) {
+  return Val_bool(0);
+}
+
+value hh_get(value key) {
+  CAMLparam1(key);
+  CAMLlocal1(result);
+  result = caml_alloc_string(0);
+  CAMLreturn(result);
+}
+
+void hh_move(value key1, value key2) {}
+
+void hh_remove(value key) {}
+
+#else
 
 #define GIG (1024l * 1024l * 1024l)
 
@@ -928,3 +1003,5 @@ void hh_remove(value key) {
   assert(hashtbl[slot].hash == get_hash(key));
   hashtbl[slot].addr = NULL;
 }
+
+#endif

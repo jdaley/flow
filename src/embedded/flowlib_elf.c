@@ -18,7 +18,7 @@
 
 #ifdef __APPLE__
 #include <mach-o/getsect.h>
-#else
+#elif !defined(_WIN32)
 #include <gelf.h>
 #include <libelf.h>
 #endif
@@ -35,7 +35,14 @@ static value SOME(value v) {
   CAMLreturn(result);
 }
 
-#ifndef __APPLE__
+#ifdef _WIN32
+
+value get_embedded_flowlib_data(value filename) {
+  CAMLparam1(filename);
+  CAMLreturn(NONE);
+}
+
+#elif !defined(__APPLE__)
 /**
  * Look for a magic "flowlib" elf section and read it out, if it exists. Most of
  * this code adapted from hphp/util/embedded-data.cpp.

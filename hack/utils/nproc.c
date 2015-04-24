@@ -14,6 +14,11 @@ value nproc(void) {
   CAMLparam0();
   CAMLlocal1(result);
 
+#ifdef _WIN32
+  result = Val_long(1);
+#else
   result = Val_long(sysconf(_SC_NPROCESSORS_ONLN));
+#endif
+
   CAMLreturn(result);
 }

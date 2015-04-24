@@ -5,3 +5,5 @@ docs/_site/
 bin
 npm-debug.log
 *.diff
+_obuild
+.ocp

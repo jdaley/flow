@@ -15,6 +15,10 @@
 
 #define Val_none Val_int(0)
 
+#ifdef _WIN32
+#define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
+#endif
+
 static value
 Val_some( value v )
 {
