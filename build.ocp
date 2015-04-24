@@ -1,5 +1,6 @@
 begin program "flow"
   ccopt = [ "-DNO_LZ4" ]
+  comp = [ "-g" ]
   requires = [ "unix" "str" ]
   files = [
     "src/embedded/flowlib_elf.c"
