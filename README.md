@@ -1,71 +1,32 @@
-# Flow
+# Flow on Windows (Experimental)
 
-Flow is a static typechecker for JavaScript. To find out more about Flow, check out [flowtype.org](http://flowtype.org/).
+This is an experimental port of [Flow](https://github.com/facebook/flow) to run on Windows.
 
-For a background on the project, please read our [launch blog post](https://code.facebook.com/posts/1505962329687926/flow-a-new-static-type-checker-for-javascript/).
+Flow is a static typechecker for JavaScript. See [flowtype.org](http://flowtype.org) for official documentation and binaries for Mac and Linux.
 
-## Requirements
+## Building Flow on Windows
 
-Flow works with:
+Install [OCPWin](http://www.typerex.org/ocpwin.html) 32-bit "full MinGW".
 
-* Mac OS X
-* Linux (64-bit)
-
-There are binary distributions for Mac OS X and many variants of Linux; you can also build it from source on almost any 64-bit Linux variant.
-
-## Building Flow
-
-Flow is written in OCaml (OCaml 4.01.0 or higher is required) and (on Linux) requires libelf. You can install OCaml on Mac OS X and Linux by following the instructions at [ocaml.org](https://ocaml.org/docs/install.html). 
-
-Once you have these dependencies, building Flow just requires running
+In the root of this repository:
 
 ```
-make
+ocp-build make -asm
+copy /Y _obuild\flow\flow.asm.exe flow.exe
 ```
 
-This produces a `bin` folder containing the `flow` binary. 
-
-*Note: at this time, the OCaml dependency prevents us from adding Flow to [npm](http://npmjs.org). Try [flow-bin](https://www.npmjs.org/package/flow-bin) if you need a npm binary wrapper.*
-
-## Running the tests
-
-To run the tests first compile flow using `make`. Then run `bash ./runtests.sh bin/flow`
-
-There is a `make test` target that compiles and runs tests.
-
-To run a subset of the tests you can pass a second argument to the `runtests.sh` file.
-
-For example: `bash runtests.sh bin/flow class | grep -v 'Skipping directory'`
-
-## Installing Flow
-
-Flow is simple to install: all you need is the `flow` binary on your PATH and you're good to go. 
-
-## Using OPAM
-
-You can also build and install flow via the OCaml [OPAM](https://opam.ocaml.org) package manager with one command:
+Try it out:
 
 ```
-opam install flowtype
+flow --version
+flow single examples\01_HelloWorld
 ```
 
-If you don't have a new enough version of OCaml to compile Flow, you can also use OPAM to bootstrap a modern version.  Install OPAM via the [binary packages](http://opam.ocaml.org/doc/Install.html#InstallOPAMin2minutes) for your operating system and run:
+## Limitations
 
-```
-opam init --comp=4.01.0
-opam install flowtype
-eval `opam config env`
-flow --help
-```
+* Server/multi-process mode doesn't work. You must use the `single` command.
+* The `lib` folder from the repository must be present in the same folder as `flow.exe`. In the Mac/Linux binaries, the contents of `lib` is embedded into the binary.
+* No color in the output.
+* Probably other things are broken :)
 
-## Documentation
-
-Check out http://flowtype.org for documentation and examples. 
-
-## Join the Flow community
-* Website: [http://flowtype.org/](http://flowtype.org/)
-* irc: #flowtype on Freenode
-* Twitter: @flowtype and #flowtype to keep up with the latest Flow news.
-
-## License
-Flow is BSD-licensed. We also provide an additional patent grant.
+Tip: To enable OCaml exception stack traces, set the environment variable `set OCAMLRUNPARAM=b`
