@@ -108,72 +108,104 @@
 
 #ifdef _WIN32
 
+static uintptr_t counter = 1;
+
 value hh_heap_size() {
   CAMLparam0();
+  printf("hh_heap_size not implemented\n");
   CAMLreturn(Val_long(0));
 }
 
-void hh_shared_init() {}
+void hh_shared_init() {
+  printf("hh_shared_init not implemented\n");
+}
 
 void hh_save(value out_filename) {
   CAMLparam1(out_filename);
+  printf("hh_save not implemented\n");
   CAMLreturn0;
 }
 
 void hh_load(value in_filename) {
   CAMLparam1(in_filename);
+  printf("hh_load not implemented\n");
   CAMLreturn0;
 }
 
-void hh_worker_init() {}
+void hh_worker_init() {
+  printf("hh_worker_init not implemented\n");
+}
 
 value hh_counter_next() {
   CAMLparam0();
   CAMLlocal1(result);
-  result = Val_long(0);
+
+  uintptr_t v = ++counter;
+
+  result = Val_long(v % Max_long);
   CAMLreturn(result);
 }
 
-void hh_shared_store(value data) {}
+void hh_shared_store(value data) {
+  printf("hh_shared_store not implemented\n");
+}
 
 value hh_shared_load() {
   CAMLparam0();
   CAMLlocal1(result);
+  printf("hh_shared_load not implemented\n");
   result = caml_alloc_string(0);
   CAMLreturn(result);
 }
 
-void hh_shared_clear() {}
+void hh_shared_clear() {
+  printf("hh_shared_clear not implemented\n");
+}
 
-void hh_add_dep(value ocaml_dep) {}
+void hh_add_dep(value ocaml_dep) {
+  printf("hh_add_dep not implemented\n");
+}
 
 value hh_get_dep(value dep) {
   CAMLparam1(dep);
   CAMLlocal1(result);
+  printf("hh_get_dep not implemented\n");
   result = Val_int(0);
   CAMLreturn(result);
 }
 
-void hh_call_after_init() {}
+void hh_call_after_init() {
+  printf("hh_call_after_init not implemented\n");
+}
 
-void hh_collect() {}
+void hh_collect() {
+  printf("hh_collect not implemented\n");
+}
 
-void hh_add(value key, value data) {}
+void hh_add(value key, value data) {
+  printf("hh_add not implemented\n");
+}
 
 value hh_mem(value key) {
+  printf("hh_mem not implemented\n");
   return Val_bool(0);
 }
 
 value hh_get(value key) {
   CAMLparam1(key);
   CAMLlocal1(result);
+  printf("hh_get not implemented\n");
   result = caml_alloc_string(0);
   CAMLreturn(result);
 }
 
-void hh_move(value key1, value key2) {}
+void hh_move(value key1, value key2) {
+  printf("hh_move not implemented\n");
+}
 
-void hh_remove(value key) {}
+void hh_remove(value key) {
+  printf("hh_remove not implemented\n");
+}
 
 #else
 
