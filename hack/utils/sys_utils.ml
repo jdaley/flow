@@ -37,7 +37,7 @@ let close_out_no_fail fn oc =
     exit 3
 
 let cat filename =
-  let ic = open_in filename in
+  let ic = open_in_bin filename in
   let len = in_channel_length ic in
   let buf = Buffer.create len in
   Buffer.add_channel buf ic len;
