@@ -441,6 +441,9 @@ end = struct
     and primary env =
       let loc = Peek.loc env in
       match Peek.token env with
+      | T_MULT ->
+          Expect.token env T_MULT;
+          loc, Type.Exists
       | T_LESS_THAN -> _function env
       | T_LPAREN -> function_or_group env
       | T_LCURLY ->
@@ -1773,6 +1776,16 @@ end = struct
                 specifiers = None;
                 source = None;
               }
+          | T_TYPE ->
+              (* export type ... *)
+              let type_alias = type_alias env in
+              let end_loc = fst type_alias in
+              Loc.btwn start_loc end_loc, Statement.ExportDeclaration {
+                default = false;
+                declaration = Some (Declaration type_alias);
+                specifiers = None;
+                source = None;
+              }
           | T_LET
           | T_CONST
           | T_VAR
@@ -1885,12 +1898,20 @@ end = struct
           Expect.token env T_IMPORT;
           (* It might turn out that we need to treat this "type" token as an
            * identifier, like import type from "module" *)
-          let isType, type_ident = match Peek.token env with
-          | T_TYPE ->
-              true, Some (Parse.identifier env)
-          | _ -> false, None in
+          let importKind, type_ident = Statement.ImportDeclaration.(
+            match Peek.token env with
+            | T_TYPE -> ImportType, Some(Parse.identifier env)
+            | T_TYPEOF ->
+              (* TODO: jeffmo
+              Expect.token env T_TYPEOF;
+              ImportTypeof, None
+              *)
+              failwith "Unsupported: `import typeof`";
+            | _ -> ImportValue, None
+          ) in
           Statement.ImportDeclaration.(match Peek.token env with
-            | T_STRING (str_loc, value, raw, octal) when isType = false ->
+            | T_STRING (str_loc, value, raw, octal)
+              when importKind = ImportValue ->
                 (* import "ModuleSpecifier"; *)
                 if octal then strict_error env Error.StrictOctalLiteral;
                 Expect.token env (T_STRING (str_loc, value, raw, octal));
@@ -1904,21 +1925,23 @@ end = struct
                   default = None;
                   specifier = None;
                   source;
-                  isType = false;
+                  importKind;
                 }
             | T_COMMA
             | T_IDENTIFIER ->
                 (* import defaultspecifier ... *)
-                let isType, default = (match type_ident, Peek.token env, Peek.value env with
+                let importKind, default = (
+                  match type_ident, Peek.token env, Peek.value env with
                   | Some _, T_COMMA, _
                   | Some _, T_IDENTIFIER, "from" ->
                       (* import type, ... *)
                       (* import type from ... *)
-                      false, type_ident
+                      Statement.ImportDeclaration.ImportValue, type_ident
                   | _ ->
                       (* import type foo ...
                       * import foo ... *)
-                      isType, Some (Parse.identifier env)) in
+                      importKind, Some (Parse.identifier env)
+                ) in
                 let specifier = (match Peek.token env with
                   | T_COMMA ->
                       Expect.token env T_COMMA;
@@ -1934,7 +1957,7 @@ end = struct
                     default;
                     specifier;
                     source;
-                    isType;
+                    importKind;
                   }
             | _ ->
                 let specifier = Some (specifier env) in
@@ -1948,7 +1971,7 @@ end = struct
                   default = None;
                   specifier;
                   source;
-                  isType;
+                  importKind;
                 }
           )
   end
@@ -2914,6 +2937,7 @@ end = struct
         | T_CASE
         | T_CATCH
         | T_CONTINUE
+        | T_DECLARE
         | T_DEFAULT
         | T_DO
         | T_FINALLY

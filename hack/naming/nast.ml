@@ -55,6 +55,7 @@ and hint_ =
   | Hfun of hint list * bool * hint
   | Happly of sid * hint list
   | Hshape of hint ShapeMap.t
+  | Hthis
 
  (* This represents the use of a type const. Type consts are accessed like
   * regular consts in Hack, i.e.
@@ -311,14 +312,19 @@ and expr_ =
   | Assert of assert_expr
   | Clone of expr
 
+(* These are "very special" constructs that we look for in, among
+ * other places, terminality checks. invariant does not appear here
+ * because it gets rewritten to If + AE_invariant_violation.
+ *
+ * TODO: get rid of assert_expr entirely in favor of rewriting to if
+ * and noreturn *)
 and assert_expr =
   | AE_assert of expr
-  | AE_invariant of expr * expr * expr list
   | AE_invariant_violation of expr * expr list
 
 and case =
-| Default of block
-| Case of expr * block
+  | Default of block
+  | Case of expr * block
 
 and catch = sid * id * block
 
@@ -334,9 +340,9 @@ and special_func =
   | Gen_array_va_rec of expr list
 
 type def =
- | Fun of fun_
- | Class of class_
- | Typedef of typedef
+  | Fun of fun_
+  | Class of class_
+  | Typedef of typedef
 
 type program = def list
 

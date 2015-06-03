@@ -18,11 +18,22 @@ do
     if [ -e ".flowconfig" ] && [ -e $exp_file ] &&
         [[ -z $filter || $name =~ $filter ]]
     then
+        # get config flags
+        all=" --all"
+        if [ -e ".testconfig" ]
+        then
+            if [ "$(awk '$1=="all:"{print $2}' .testconfig)" == "false" ]
+            then
+                all=""
+            fi
+        fi
+
+        # check this dir
         echo "Testing directory: ${name}"
         out_file="${name}.out"
-        $FLOW check . --all --strip-root --show-all-errors 1> $out_file
+        $FLOW check . $all --strip-root --show-all-errors 1> $out_file
         diff_file="${name}.diff"
-        diff -u $out_file $exp_file > $diff_file
+        diff -u $exp_file $out_file > $diff_file
         if [ -s $diff_file ]
         then
             (( failed++ ))

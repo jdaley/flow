@@ -88,10 +88,10 @@ module CompareTypes = struct
     let acc = ty_ acc x y in
     acc
 
-  and ty_ (subst, same as acc) ty1 ty2 =
+  and ty_ (subst, same as acc) (ty1: decl ty_) (ty2: decl ty_) =
     match ty1, ty2 with
-    | Tobject, Tobject
     | Tany, Tany
+    | Tthis, Tthis
     | Tmixed, Tmixed -> acc
     | Tarray (ty1, ty2), Tarray (ty3, ty4) ->
         let acc = ty_opt (subst, same) ty1 ty3 in
@@ -104,15 +104,8 @@ module CompareTypes = struct
         ty acc ty1 ty2
     | Tprim x, Tprim y ->
         subst, same && x = y
-    | Tvar x, Tvar y ->
-        subst, same && x = y
     | Tfun f1, Tfun f2 ->
         fun_type acc f1 f2
-    | Tabstract (sid1, tyl1, cstr1), Tabstract (sid2, tyl2, cstr2) ->
-        let acc = ty_opt acc cstr1 cstr2 in
-        let acc = string_id acc sid1 sid2 in
-        let acc = tyl acc tyl1 tyl2 in
-        acc
     | Tapply (sid1, tyl1), Tapply (sid2, tyl2) ->
         let acc = string_id acc sid1 sid2 in
         let acc = tyl acc tyl1 tyl2 in
@@ -121,11 +114,8 @@ module CompareTypes = struct
       when List.length ids1 = List.length ids2 ->
         let acc = ty acc root_ty1 root_ty2 in
         List.fold_left2 string_id acc ids1 ids2
-    | Tunresolved tyl1, Tunresolved tyl2
     | Ttuple tyl1, Ttuple tyl2 ->
         tyl acc tyl1 tyl2
-    | Tanon (arity1, id1), Tanon (arity2, id2) ->
-        subst, same && arity1 = arity2 && id1 = id2
     | Tshape fdm1, Tshape fdm2 ->
         ShapeMap.fold begin fun name v1 acc ->
           match ShapeMap.get name fdm2 with
@@ -133,9 +123,9 @@ module CompareTypes = struct
           | Some v2 ->
               ty acc v1 v2
         end fdm1 acc
-    | (Tanon _ | Tany | Tmixed | Tarray (_, _) | Tshape _ | Taccess (_, _) |
-      Tgeneric (_, _)| Toption _| Tprim _| Tvar _| Tabstract _ |
-      Tfun _| Tapply (_, _) | Ttuple _| Tunresolved _| Tobject), _ -> default
+    | (Tany | Tmixed | Tarray (_, _) | Tfun _ | Taccess (_, _) | Tgeneric (_, _)
+       | Toption _ | Tprim _ | Tshape _| Tapply (_, _) | Ttuple _ | Tthis
+      ), _ -> default
 
   and tyl acc tyl1 tyl2 =
     if List.length tyl1 <> List.length tyl2
@@ -249,8 +239,8 @@ module CompareTypes = struct
     let acc = subst, same in
     let acc = tparam_list acc c1.tc_tparams c2.tc_tparams in
     let acc = members acc c1.tc_consts c2.tc_consts in
-    let acc = members acc c1.tc_cvars c2.tc_cvars in
-    let acc = members acc c1.tc_scvars c2.tc_scvars in
+    let acc = members acc c1.tc_props c2.tc_props in
+    let acc = members acc c1.tc_sprops c2.tc_sprops in
     let acc = members acc c1.tc_methods c2.tc_methods in
     let acc = members acc c1.tc_smethods c2.tc_smethods in
     let acc = typeconsts acc c1.tc_typeconsts c2.tc_typeconsts in
@@ -332,24 +322,19 @@ module TraversePos(ImplementPos: sig val pos: Pos.t -> Pos.t end) = struct
   let rec ty (p, x) =
     reason p, ty_ x
 
-  and ty_ = function
-    | Tanon _              -> failwith "TraversePos: Unexpected Tanon"
-    | Tvar _               -> failwith "TraversePos: Unexpected Tvar"
+  and ty_: decl ty_ -> decl ty_ = function
     | Tany
+    | Tthis
     | Tmixed as x          -> x
     | Tarray (ty1, ty2)    -> Tarray (ty_opt ty1, ty_opt ty2)
     | Tprim _ as x         -> x
     | Tgeneric (s, cstr_opt) -> Tgeneric (s, constraint_ cstr_opt)
     | Ttuple tyl           -> Ttuple (List.map (ty) tyl)
-    | Tunresolved tyl      -> Tunresolved (List.map (ty) tyl)
     | Toption x            -> Toption (ty x)
     | Tfun ft              -> Tfun (fun_type ft)
     | Tapply (sid, xl)     -> Tapply (string_id sid, List.map (ty) xl)
     | Taccess (root_ty, ids) ->
         Taccess (ty root_ty, List.map string_id ids)
-    | Tabstract (sid, xl, x) ->
-        Tabstract (string_id sid, List.map (ty) xl, ty_opt x)
-    | Tobject as x         -> x
     | Tshape fdm           -> Tshape (ShapeMap.map ty fdm)
 
   and ty_opt x = opt_map ty x
@@ -403,8 +388,8 @@ module TraversePos(ImplementPos: sig val pos: Pos.t -> Pos.t end) = struct
       tc_tparams               = List.map type_param tc.tc_tparams    ;
       tc_consts                = SMap.map class_elt tc.tc_consts      ;
       tc_typeconsts            = SMap.map typeconst tc.tc_typeconsts  ;
-      tc_cvars                 = SMap.map class_elt tc.tc_cvars       ;
-      tc_scvars                = SMap.map class_elt tc.tc_scvars      ;
+      tc_props                 = SMap.map class_elt tc.tc_props       ;
+      tc_sprops                = SMap.map class_elt tc.tc_sprops      ;
       tc_methods               = SMap.map class_elt tc.tc_methods     ;
       tc_smethods              = SMap.map class_elt tc.tc_smethods    ;
       tc_construct             = opt_map class_elt (fst tc.tc_construct), (snd tc.tc_construct);
@@ -485,14 +470,14 @@ module ClassDiff = struct
     let acc = add_inverted_deps acc (fun x -> Dep.Const (cid, x)) consts_diff in
 
     (* compare class members *)
-    let cvars_diff = smap class1.tc_cvars class2.tc_cvars in
-    let is_unchanged = is_unchanged && SSet.is_empty cvars_diff in
-    let acc = add_inverted_deps acc (fun x -> Dep.CVar (cid, x)) cvars_diff in
+    let props_diff = smap class1.tc_props class2.tc_props in
+    let is_unchanged = is_unchanged && SSet.is_empty props_diff in
+    let acc = add_inverted_deps acc (fun x -> Dep.Prop (cid, x)) props_diff in
 
     (* compare class static members *)
-    let scvars_diff = smap class1.tc_scvars class2.tc_scvars in
-    let is_unchanged = is_unchanged && SSet.is_empty scvars_diff in
-    let acc = add_inverted_deps acc (fun x -> Dep.SCVar (cid, x)) scvars_diff in
+    let sprops_diff = smap class1.tc_sprops class2.tc_sprops in
+    let is_unchanged = is_unchanged && SSet.is_empty sprops_diff in
+    let acc = add_inverted_deps acc (fun x -> Dep.SProp (cid, x)) sprops_diff in
 
     (* compare class methods *)
     let methods_diff = smap class1.tc_methods class2.tc_methods in

@@ -273,7 +273,7 @@ module Typing                               = struct
   let override_final                        = 4070 (* DONT MODIFY!!!! *)
   let override_per_trait                    = 4071 (* DONT MODIFY!!!! *)
   let pair_arity                            = 4072 (* DONT MODIFY!!!! *)
-  let parent_abstract_call                  = 4073 (* DONT MODIFY!!!! *)
+  let abstract_call                         = 4073 (* DONT MODIFY!!!! *)
   let parent_in_trait                       = 4074 (* DONT MODIFY!!!! *)
   let parent_outside_class                  = 4075 (* DONT MODIFY!!!! *)
   let parent_undefined                      = 4076 (* DONT MODIFY!!!! *)
@@ -332,7 +332,7 @@ module Typing                               = struct
   let cyclic_typeconst                      = 4131 (* DONT MODIFY!!!! *)
   let nullsafe_property_write_context       = 4132 (* DONT MODIFY!!!! *)
   let noreturn_usage                        = 4133 (* DONT MODIFY!!!! *)
-
+  let this_lvalue                           = 4134 (* DONT MODIFY!!!! *)
   (* EXTEND HERE WITH NEW VALUES IF NEEDED *)
 end
 
@@ -1148,10 +1148,23 @@ let parent_outside_class pos =
   add Typing.parent_outside_class pos
     "'parent' is undefined outside of a class"
 
-let parent_abstract_call meth_name call_pos parent_pos =
-  add_list Typing.parent_abstract_call [
+let parent_abstract_call meth_name call_pos decl_pos =
+  add_list Typing.abstract_call [
     call_pos, ("Cannot call parent::"^meth_name^"(); it is abstract");
-    parent_pos, "Declaration is here"
+    decl_pos, "Declaration is here"
+  ]
+
+let self_abstract_call meth_name call_pos decl_pos =
+  add_list Typing.abstract_call [
+    call_pos, ("Cannot call self::"^meth_name^"(); it is abstract. Did you mean static::"^meth_name^"()?");
+    decl_pos, "Declaration is here"
+  ]
+
+let classname_abstract_call cname meth_name call_pos decl_pos =
+  let cname = Utils.strip_ns cname in
+  add_list Typing.abstract_call [
+    call_pos, ("Cannot call "^cname^"::"^meth_name^"(); it is abstract");
+    decl_pos, "Declaration is here"
   ]
 
 let isset_empty_unset_in_strict pos name =
@@ -1472,6 +1485,9 @@ let declared_contravariant pos1 pos2 emsg =
 let cyclic_typeconst pos sl =
   add Typing.cyclic_typeconst pos
     ("Cyclic type constant:\n  "^String.concat " -> " sl)
+
+let this_lvalue pos =
+  add Typing.this_lvalue pos "Cannot assign a value to $this"
 
 (*****************************************************************************)
 (* Typing decl errors *)

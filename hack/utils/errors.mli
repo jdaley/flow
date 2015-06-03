@@ -120,6 +120,8 @@ val tuple_arity : Pos.t -> int -> Pos.t -> int -> unit
 val undefined_parent : Pos.t -> unit
 val parent_outside_class : Pos.t -> unit
 val parent_abstract_call : string -> Pos.t -> Pos.t -> unit
+val self_abstract_call : string -> Pos.t -> Pos.t -> unit
+val classname_abstract_call : string -> string -> Pos.t -> Pos.t -> unit
 val isset_empty_unset_in_strict : Pos.t -> string -> unit
 val array_get_arity : Pos.t -> string -> Pos.t -> unit
 val typing_error : Pos.t -> string -> unit
@@ -262,6 +264,7 @@ val cannot_declare_constant:
 val ambiguous_inheritance: Pos.t -> string -> string -> error -> unit
 val cyclic_typeconst : Pos.t -> string list -> unit
 val explain_contravariance : Pos.t -> string -> error -> unit
+val this_lvalue : Pos.t -> unit
 
 val to_json : Pos.absolute error_ -> Hh_json.json
 val to_string : Pos.absolute error_ -> string

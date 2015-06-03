@@ -26,6 +26,7 @@ module Inst = Typing_instantiate
 module Attrs = Attributes
 
 module SN = Naming_special_names
+module Phase = Typing_phase
 
 (*****************************************************************************)
 (* Module used to track what classes are declared and which ones still need
@@ -93,11 +94,9 @@ let check_arity pos class_name class_type class_parameters =
   then Errors.class_arity pos class_type.tc_pos class_name arity;
   ()
 
-let make_substitution self_ty pos class_name class_type class_parameters =
+let make_substitution pos class_name class_type class_parameters =
   check_arity pos class_name class_type class_parameters;
-  let this_ty = (fst self_ty,
-    Tgeneric ("this", Some (Ast.Constraint_as, self_ty))) in
-  Inst.make_subst_with_this this_ty class_type.tc_tparams class_parameters
+  Inst.make_subst Phase.decl class_type.tc_tparams class_parameters
 
 (*-------------------------- end copypasta *)
 
@@ -156,19 +155,19 @@ let merge_single_req env subst inc_req_ty existing_req_opt
        * the one that's more restrictive (subtype of the other) *)
       let env, result_ty = Errors.try_
         (fun () ->
-          let env = Typing_ops.sub_type incoming_pos
+          let env = Typing_ops.sub_type_decl incoming_pos
             Reason.URclass_req_merge env ex_req_ty inc_req_ty
           in env, inc_req_ty)
         (fun _ ->
-          let env = Typing_ops.sub_type incoming_pos
+          let env = Typing_ops.sub_type_decl incoming_pos
             Reason.URclass_req_merge env inc_req_ty ex_req_ty
           in env, ex_req_ty
         )
       in
-      (env : Env.env), (result_ty: Typing_defs.ty)
+      (env : Env.env), (result_ty: decl ty)
     | None ->
       let env, inc_req_ty = Inst.instantiate subst env inc_req_ty in
-      (env : Env.env), (inc_req_ty: Typing_defs.ty)
+      (env : Env.env), (inc_req_ty: decl ty)
 
 (* for non-traits, check that requirements inherited from
  * traits/interfaces have been satisfied; for traits/interfaces,
@@ -185,8 +184,8 @@ let merge_parent_class_reqs class_nast impls
       (* The class lives in PHP *)
       env, req_ancestors, req_ancestors_extends
     | Some parent_type ->
-      let self = Typing.get_self_from_c env class_nast in
-      let subst = make_substitution self parent_pos parent_name parent_type parent_params in
+      let subst =
+        make_substitution parent_pos parent_name parent_type parent_params in
       match class_nast.c_kind with
         | Ast.Cnormal | Ast.Cabstract ->
           (* Check inherited requirements and check their compatibility *)
@@ -198,7 +197,7 @@ let merge_parent_class_reqs class_nast impls
                 env
               | Some impl_ty ->
                 let env, req_ty = Inst.instantiate subst env req_ty in
-                Typing_ops.sub_type parent_pos Reason.URclass_req env req_ty impl_ty
+                Typing_ops.sub_type_decl parent_pos Reason.URclass_req env req_ty impl_ty
           end parent_type.tc_req_ancestors env
           in
           env, req_ancestors, req_ancestors_extends
@@ -240,7 +239,7 @@ let declared_class_req class_nast impls (env, requirements, req_extends) hint =
           (* Due to checking of incompatibility when accumulating
            * requirements, subtype violations in this case might not
            * actually be possible *)
-          Typing_ops.sub_type req_pos Reason.URclass_req env req_ty impl_ty
+          Typing_ops.sub_type_decl req_pos Reason.URclass_req env req_ty impl_ty
       )
   in
 
@@ -254,7 +253,7 @@ let declared_class_req class_nast impls (env, requirements, req_extends) hint =
       (* since the req is declared on this class, we should
        * emphatically *not* substitute: a require extends Foo<T> is
        * going to be this class's <T> *)
-      let subst = Inst.make_subst [] [] in
+      let subst = Inst.make_subst Phase.decl [] [] in
       let ex_ty_opt = SMap.get req_name requirements in
       let env, merged = merge_single_req env subst
         req_ty ex_ty_opt req_pos in
@@ -400,8 +399,8 @@ and class_decl tcopt c =
   let class_dep = Dep.Class cls_name in
   let env = Env.set_root env class_dep in
   let env, inherited = Typing_inherit.make env c in
-  let cvars = inherited.Typing_inherit.ih_cvars in
-  let env, cvars = List.fold_left (class_var_decl c) (env, cvars) c.c_vars in
+  let props = inherited.Typing_inherit.ih_props in
+  let env, props = List.fold_left (class_var_decl c) (env, props) c.c_vars in
   let m = inherited.Typing_inherit.ih_methods in
   let env, m = List.fold_left (method_decl_acc c) (env, m) c.c_methods in
   let consts = inherited.Typing_inherit.ih_consts in
@@ -412,8 +411,8 @@ and class_decl tcopt c =
   let env, typeconsts =
     List.fold_left (typeconst_decl c) (env, typeconsts) c.c_typeconsts in
   let sclass_var = static_class_var_decl c in
-  let scvars = inherited.Typing_inherit.ih_scvars in
-  let env, scvars = List.fold_left sclass_var (env, scvars) c.c_static_vars in
+  let sprops = inherited.Typing_inherit.ih_sprops in
+  let env, sprops = List.fold_left sclass_var (env, sprops) c.c_static_vars in
   let sm = inherited.Typing_inherit.ih_smethods in
   let env, sm = List.fold_left (method_decl_acc c) (env, sm) c.c_static_methods in
   SMap.iter (check_static_method m) sm;
@@ -434,9 +433,8 @@ and class_decl tcopt c =
       ty :: impl
     | _ -> impl
   in
-  let self = Typing.get_self_from_c env c in
   let env, impl_dimpl =
-    lfold (Typing.get_implements ~with_checks:false ~this:self) env impl in
+    lfold (Typing.get_implements ~with_checks:false) env impl in
   let impl, dimpl = List.split impl_dimpl in
   let impl = List.fold_right (SMap.fold SMap.add) impl SMap.empty in
   let dimpl = List.fold_right (SMap.fold SMap.add) dimpl SMap.empty in
@@ -464,9 +462,7 @@ and class_decl tcopt c =
        || DynamicYield.contains_dynamic_yield req_ancestors_extends)
   in
   let env, m = if dy_check
-    then
-      (* let () = Printf.printf "DynamicYield.decl %s\n" cls_name in  *)
-      DynamicYield.decl env m
+    then DynamicYield.decl env m
     else env, m
   in
   let ext_strict = List.fold_left (trait_exists env) ext_strict c.c_uses in
@@ -505,8 +501,8 @@ and class_decl tcopt c =
     tc_tparams = tparams;
     tc_consts = consts;
     tc_typeconsts = typeconsts;
-    tc_cvars = cvars;
-    tc_scvars = scvars;
+    tc_props = props;
+    tc_sprops = sprops;
     tc_methods = m;
     tc_smethods = sm;
     tc_construct = cstr;
@@ -838,7 +834,7 @@ and type_typedef_naming_and_decl nenv tdef =
     | None -> env, None
     | Some constraint_type ->
       let env, constraint_type = Typing_hint.hint env constraint_type in
-      let sub_type = Typing_ops.sub_type pos Reason.URnewtype_cstr in
+      let sub_type = Typing_ops.sub_type_decl pos Reason.URnewtype_cstr in
       let env = sub_type env constraint_type concrete_type in
       env, Some constraint_type
   in

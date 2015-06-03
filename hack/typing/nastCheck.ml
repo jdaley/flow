@@ -211,9 +211,6 @@ module CheckFunctionType = struct
     | _, Assert (AE_invariant_violation (e, el)) ->
         liter expr f_type (e :: el);
         ()
-    | _, Assert (AE_invariant (e1, e2, el)) ->
-        liter expr f_type (e1 :: e2 :: el);
-        ()
     | _, Shape fdm ->
         ShapeMap.iter (fun _ v -> expr f_type v) fdm;
         ()
@@ -273,7 +270,7 @@ and hint env (p, h) =
   hint_ env p h
 
 and hint_ env p = function
-  | Hany  | Hmixed  | Habstr _ | Hprim _  | Haccess _ ->
+  | Hany  | Hmixed  | Habstr _ | Hprim _  | Hthis | Haccess _ ->
       ()
   | Harray (ty1, ty2) ->
       maybe hint env ty1;
@@ -454,7 +451,7 @@ and check_no_class_tparams class_tparams (pos, ty)  =
       then Errors.typeconst_depends_on_external_tparam pos c_tp_pos c_tp_name
     end class_tparams in
   match ty with
-    | Hany | Hmixed | Hprim _ -> ()
+    | Hany | Hmixed | Hprim _ | Hthis -> ()
     (* We have found a type parameter. Make sure its name does not match
      * a name in class_tparams *)
     | Habstr (tparam_name, cstr_opt) ->
@@ -679,10 +676,6 @@ and expr_ env = function
       hint env h;
       expr env e;
       ()
-  | Assert (AE_invariant (e1, e2, el)) ->
-      expr env e1;
-      expr env e2;
-      liter expr env el
   | Binop (_, e1, e2) ->
       expr env e1;
       expr env e2;

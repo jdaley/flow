@@ -35,8 +35,7 @@ type options = {
   opt_verbose : bool;
   opt_all : bool;
   opt_weak : bool;
-  opt_traces : bool;
-  opt_newtraces : bool;
+  opt_traces : int;
   opt_strict : bool;
   opt_console : bool;
   opt_json : bool;
@@ -54,8 +53,7 @@ let init_modes opts =
   modes.verbose <- opts.opt_verbose;
   modes.all <- opts.opt_all;
   modes.weak_by_default <- opts.opt_weak;
-  modes.traces_enabled <- opts.opt_traces;
-  modes.newtraces_enabled <- opts.opt_newtraces;
+  modes.traces <- opts.opt_traces;
   modes.strict <- opts.opt_strict;
   modes.console <- opts.opt_console;
   modes.json <- opts.opt_json;
@@ -69,24 +67,44 @@ let init_modes opts =
 
 (****************** shared context heap *********************)
 
-(* Performance analysis suggests that we really should use WithCache instead of
-   NoCache for ContextHeap (reads dominate writes). Unfortunately, we cannot do
-   that yet, since we modify contexts locally after reading them from the heap.
-   Proper type substitution instead of context manipulation during merge may
-   eliminate this problem, one way or another.
-*)
-
 (* map from file names to contexts *)
-module ContextHeap = SharedMem.NoCache (String) (struct
+(* NOTE: Entries are cached for performance, since contexts are read a lot more
+   than they are written. But this means that proper care must be taken when
+   reading contexts: in particular, context graphs have mutable bounds, so they
+   must be copied, otherwise bad things will happen. (The cost of copying
+   context graphs is presumably a lot less than deserializing contexts, so the
+   optimization makes sense. *)
+module ContextHeap = SharedMem.WithCache (String) (struct
   type t = context
   let prefix = Prefix.make()
 end)
 
+(* errors are stored by phase,
+   in maps from file path to error set
+ *)
+(* errors encountered during parsing.
+   Note: both @flow and non-@flow files are parsed,
+   and their errors are retained. However, only
+   files referenced as modules from @flow files
+   have their parse errors reported. collate_errors
+   does the filtering *)
+let parse_errors = ref SMap.empty
+(* errors encountered during local inference *)
 let infer_errors = ref SMap.empty
+(* errors encountered during module commit *)
 let module_errors = ref SMap.empty
+(* errors encountered during merge *)
 let merge_errors = ref SMap.empty
+(* aggregate error map, built after check or recheck
+   by collate_errors
+ *)
 let all_errors = ref SMap.empty
 
+(* retrieve a full error list.
+   Note: in-place conversion using an array is to avoid
+   memory pressure on pathologically huge error sets, but
+   this may no longer be necessary
+ *)
 let get_errors () =
   let revlist = SMap.fold (
     fun file errset ret ->
@@ -97,7 +115,6 @@ let get_errors () =
   in
   List.rev revlist
 
-
 (****************** typecheck job helpers *********************)
 
 (* error state handling.
@@ -106,9 +123,10 @@ let get_errors () =
 let clear_errors files =
   List.iter (fun file ->
     debug_string (fun () -> spf "clear errors %s" file);
-    module_errors := SMap.remove file !module_errors;
+    parse_errors := SMap.remove file !parse_errors;
     infer_errors := SMap.remove file !infer_errors;
-    merge_errors := SMap.remove file !merge_errors
+    merge_errors := SMap.remove file !merge_errors;
+    module_errors := SMap.remove file !module_errors;
   ) files
 
 let save_errors mapref files errsets =
@@ -138,21 +156,28 @@ let distrib_errs file eset emap = Errors_js.(
   ) eset emap
 )
 
+(* we report parse errors if a file is either checked,
+   or unchecked but used as a module by a checked file *)
+let filter_unchecked_unused errmap =
+  let is_imported m = match Module.get_reverse_imports m with
+  | Some set -> SSet.cardinal set > 0 | None -> false in
+  SMap.filter Module.(fun file _ ->
+    let info = get_module_info file in
+    info.checked || is_imported info._module
+  ) errmap
+
 (* relocate errors to their reported positions,
    combine in single error map *)
 let collate_errors workers files =
-  let all = SMap.fold distrib_errs !merge_errors !infer_errors in
+  let all = filter_unchecked_unused !parse_errors in
+  let all = SMap.fold distrib_errs !infer_errors all in
+  let all = SMap.fold distrib_errs !merge_errors all in
   let all = SMap.fold distrib_errs !module_errors all in
   all_errors := all
 
 let wraptime opts pred msg f =
-  if opts.opt_quiet || not opts.opt_profile then f () else (
-    let start = Unix.gettimeofday () in
-    let ret = f () in
-    let elap = (Unix.gettimeofday ()) -. start in
-    if not (pred elap) then () else prerr_endline (msg elap);
-    ret
-  )
+  if opts.opt_quiet || not opts.opt_profile then f ()
+  else time pred msg f
 
 let checktime opts limit msg f =
   wraptime opts (fun t -> t > limit) msg f
@@ -229,26 +254,49 @@ let check_requires cx =
       let m_name = req in
       let reason = Reason_js.mk_reason m_name loc in
       let tvar = Flow_js.mk_tvar cx reason in
-      Flow_js.lookup_builtin cx (spf "$module__%s" m_name)
+      Flow_js.lookup_builtin cx (Reason_js.internal_module_name m_name)
         reason (Some (Reason_js.builtin_reason m_name)) tvar;
   ) cx.required
 
-(* It would be nice to cache the results of merging requires. However, the naive
-   scheme of letting workers add and get entries to the cache is not
-   concurrency-safe: see sharedMem.mli. This means that to cache merges, we'd
-   actually need to merge things in dependency order. *)
+(* Merging involves looking up a lot of contexts, and due to the graph-structure
+   of dependencies, the same context may be looked up multiple times. We already
+   cache contexts in the shared memory for performance, but context graphs need
+   to be copied because they have mutable bounds. We maintain an additional
+   cache of local copies. Mutating bounds in local copies of context graphs is
+   not only OK, but we rely on it during merging, so it is both safe and
+   necessary to cache the local copies. As a side effect, this probably helps
+   performance too by avoiding redundant copying. *)
+module ContextCache = struct
+  let cached_infer_contexts = Hashtbl.create 0
 
-(* On the other hand, merging requires itself involves looking up a lot of
-   contexts, and due to the graph-structure of dependencies, the same context
-   may be looked up multiple times. To avoid redundant traffic through shared
-   memory, we can cache these lookups. *)
-let cached_infer_contexts = Hashtbl.create 0
-let cached_infer_context file =
-  try Hashtbl.find cached_infer_contexts file
-  with _ ->
+  (* find a context in the cache *)
+  let find file =
+    try Some (Hashtbl.find cached_infer_contexts file)
+    with _ -> None
+
+  (* read a context from shared memory, copy its graph, and cache the context *)
+  let read file =
     let cx = ContextHeap.find_unsafe file in
-    Hashtbl.replace cached_infer_contexts file cx;
+    let cx = { cx with graph = IMap.map copy_bounds cx.graph } in
+    Hashtbl.add cached_infer_contexts file cx;
     cx
+
+  (* clear the cache; do this once before every merge *)
+  let clear () =
+    Hashtbl.clear cached_infer_contexts
+end
+
+let add_decl (r, cx) declarations =
+  match SMap.get r declarations with
+  | None -> SMap.add r [cx] declarations
+  | Some cxs -> SMap.add r (cx::cxs) declarations
+
+let merge_decls =
+  SMap.merge (fun r cxs1 cxs2 -> match cxs1, cxs2 with
+    | None, None -> None
+    | Some cxs, None | None, Some cxs -> Some cxs
+    | Some cxs1, Some cxs2 -> Some (List.rev_append cxs1 cxs2)
+  )
 
 (* Merging requires for a context returns a dependency graph: (a) the set of
    contexts of transitive strict requires for that context, (b) the set of edges
@@ -256,61 +304,59 @@ let cached_infer_context file =
    interesting property of this procedure is that it gracefully handles cycles;
    by delaying the actual substitutions, it can detect cycles via caching. *)
 let rec merge_requires cx rs =
-  SSet.fold (fun r (cxs,links,declarations) ->
+  SSet.fold (fun r (cxs, implementations, declarations) ->
     if Module.module_exists r && checked r then
       let file = Module.get_file r in
-      try
-        let cx_ = Hashtbl.find cached_infer_contexts file in
-        cxs,
-        (cx_,cx)::links,
-        declarations
-      with _ ->
-        let cx_ = ContextHeap.find_unsafe file in
-        Hashtbl.add cached_infer_contexts file cx_;
-        let (cxs_, links_, declarations_) =
-          merge_requires cx_ cx_.strict_required in
-        List.rev_append cxs_ (cx_::cxs),
-        List.rev_append links_ ((cx_,cx)::links),
-        List.rev_append declarations_ declarations
+      match ContextCache.find file with
+      | Some cx_ ->
+          cxs,
+          (cx_, cx)::implementations,
+          declarations
+      | None ->
+          let cx_ = ContextCache.read file in
+          let (cxs_, implementations_, declarations_) =
+            merge_requires cx_ cx_.strict_required in
+          List.rev_append cxs_ (cx_::cxs),
+          List.rev_append implementations_ ((cx_,cx)::implementations),
+          merge_decls declarations_ declarations
     else
       cxs,
-      links,
-      (cx,r)::declarations
-  ) rs ([],[],[])
+      implementations,
+      add_decl (r, cx) declarations
+  ) rs ([],[],SMap.empty)
 
 (* To merge results for a context, check for the existence of its requires,
    compute the dependency graph (via merge_requires), and then compute
    substitutions (via merge_module_strict). A merged context is returned. *)
-let merge_strict_context cx master_cx cache_function =
+let merge_strict_context cx master_cx =
   if cx.checked then (
-    Hashtbl.clear cached_infer_contexts;
-
     check_requires cx;
-    cache_function ();
 
-    let cxs, links, declarations = merge_requires cx cx.required in
-    TI.merge_module_strict cx cxs links declarations master_cx;
+    let cxs, implementations, declarations = merge_requires cx cx.required in
+    TI.merge_module_strict cx cxs implementations declarations master_cx
   ) else (
     (* do nothing on unchecked files *)
   );
   cx
 
+(**********************************)
+(* entry point for merging a file *)
+(**********************************)
 let merge_strict_file file =
-  let cx = ContextHeap.find_unsafe file in
-  let master_cx = ContextHeap.find_unsafe (Files_js.get_flowlib_root ()) in
-  merge_strict_context cx master_cx (fun () -> Hashtbl.add cached_infer_contexts file cx)
-
-let merge_strict_file_with_master file master_cx =
-  let cx = ContextHeap.find_unsafe file in
+  (* First, clear the local context cache. *)
+  ContextCache.clear();
+  (* Subsequently, always use ContextCache to read contexts, instead of directly
+     using ContextHeap; otherwise bad things will happen. *)
+  let cx = ContextCache.read file in
+  let master_cx = ContextCache.read (Files_js.get_flowlib_root ()) in
   merge_strict_context cx master_cx
-    (fun () -> Hashtbl.add cached_infer_contexts file cx)
 
 let typecheck_contents contents filename =
-  match Parsing_service_js.do_parse ~keep_errors:true contents filename with
+  match Parsing_service_js.do_parse contents filename with
   | Some ast, None ->
       let cx = TI.infer_ast ast filename "-" true in
       let master_cx = ContextHeap.find_unsafe (Files_js.get_flowlib_root ()) in
-      Some (merge_strict_context cx master_cx (fun () -> ())), cx.errors
+      Some (merge_strict_context cx master_cx), cx.errors
   | _, Some errors ->
       None, errors
   | _ ->
@@ -319,13 +365,12 @@ let typecheck_contents contents filename =
 (* *)
 let merge_strict_job opts (merged, errsets) files =
   init_modes opts;
-  let master_cx = ContextHeap.find_unsafe (Files_js.get_flowlib_root ()) in
   List.fold_left (fun (merged, errsets) file ->
     try checktime opts 1.0
       (fun t -> spf "perf: merged %S in %f" file t)
       (fun () ->
         (*prerr_endlinef "[%d] MERGE: %s" (Unix.getpid()) file;*)
-        let cx = merge_strict_file_with_master file master_cx in
+        let cx = merge_strict_file file in
         cx.file :: merged, cx.errors :: errsets
       )
     with exc ->
@@ -407,11 +452,13 @@ let commit_modules inferred removed =
 (* helper *)
 (* make_merge_input takes list of files produced by infer, and
    returns list of files to merge (typically an expansion) *)
-let typecheck workers files removed opts make_merge_input =
+let typecheck workers files removed unparsed opts make_merge_input =
   (* TODO remove after lookup overhaul *)
   Module.clear_filename_cache ();
   (* local inference populates context heap, module info heap *)
   let inferred = infer workers files opts in
+  (* add tracking modules for unparsed files *)
+  List.iter Module.add_unparsed_info unparsed;
   (* create module dependency graph, warn on dupes etc. *)
   commit_modules inferred removed;
   (* SHUTTLE *)
@@ -514,7 +561,6 @@ let recheck genv env modified opts =
   if not opts.opt_strict
   then failwith "Missing -- strict";
 
-
   (* filter modified files *)
   let root = ServerArgs.root genv.ServerEnv.options in
   let config = FlowConfig.get root in
@@ -535,7 +581,7 @@ let recheck genv env modified opts =
     Parsing_service_js.reparse genv.ServerEnv.workers modified
       (fun () -> init_modes opts)
   in
-  save_errors infer_errors freshparse_fail freshparse_errors;
+  save_errors parse_errors freshparse_fail freshparse_errors;
 
   (* get old (unmodified, undeleted) files that were parsed successfully *)
   let old_parsed = Relative_path.Map.fold (fun k _ a ->
@@ -563,7 +609,12 @@ let recheck genv env modified opts =
 
   (* recheck *)
   let freshparsed_list = SSet.elements freshparsed in
-  typecheck genv.ServerEnv.workers freshparsed_list removed_modules opts
+  typecheck
+    genv.ServerEnv.workers
+    freshparsed_list
+    removed_modules
+    freshparse_fail
+    opts
     (fun inferred ->
       (* need to merge the closure of inferred files and their deps *)
       let inferred_set = set_of_list inferred in
@@ -595,15 +646,14 @@ let full_check workers parse_next opts =
   };
   init_modes opts;
 
-  let parse_results =
+  let parsed, error_files, errors =
     Parsing_service_js.parse workers parse_next
       (fun () -> init_modes opts)
   in
-  let parsed, parse_fails, parse_errors = parse_results in
-  save_errors infer_errors parse_fails parse_errors;
+  save_errors parse_errors error_files errors;
 
   let files = SSet.elements parsed in
-  let checked = typecheck workers files SSet.empty opts (fun x ->
+  let checked = typecheck workers files SSet.empty error_files opts (fun x ->
     Init_js.init (fun file errs ->
       save_errors infer_errors [file] [errs]);
     x
