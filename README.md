@@ -25,7 +25,7 @@ flow single examples\01_HelloWorld
 ## Limitations
 
 * Server/multi-process mode doesn't work. You must use the `single` command.
-* The `lib` folder from the repository must be present in the same folder as `flow.exe`. In the Mac/Linux binaries, the contents of `lib` is embedded into the binary.
+* The `lib` folder and `find.exe` file from the repository must be present in the same folder as `flow.exe`. On Mac/Linux, the contents of `lib` is embedded into the binary, and `find` is native.
 * No color in the output.
 * Probably other things are broken :)
 
