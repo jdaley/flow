@@ -7,3 +7,4 @@ npm-debug.log
 *.diff
 _obuild
 .ocp
+flow.exe
