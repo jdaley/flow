@@ -27,6 +27,6 @@ flow single examples\01_HelloWorld
 * Server/multi-process mode doesn't work. You must use the `single` command.
 * The `lib` folder and `find.exe` file from the repository must be present in the same folder as `flow.exe`. On Mac/Linux, the contents of `lib` is embedded into the binary, and `find` is native.
 * No color in the output.
-* Probably other things are broken :)
+* Probably other things are broken. In particular, `hack\heap\hh_shared.c` is just a stub implementation, and I don't really know what impact that has.
 
 Tip: To enable OCaml exception stack traces, set the environment variable `set OCAMLRUNPARAM=b`
