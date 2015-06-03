@@ -52,7 +52,7 @@ end = struct
   let commands = ShellCommand.command :: commands
 
   let main () =
-    Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
+    (*Sys.set_signal Sys.sigpipe Sys.Signal_ignore;*)
     let default_command = DefaultCommand.command in
     let argv = Array.to_list Sys.argv in
     let default = CommandSpec.name default_command in

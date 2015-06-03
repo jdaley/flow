@@ -239,7 +239,7 @@ end = struct
     (* this is to transform SIGPIPE in an exception. A SIGPIPE can happen when
     * someone C-c the client.
     *)
-    Sys.set_signal Sys.sigpipe Sys.Signal_ignore;
+    (*Sys.set_signal Sys.sigpipe Sys.Signal_ignore;*)
     PidLog.init root;
     PidLog.log ~reason:"main" (Unix.getpid());
     let genv = ServerEnvBuild.make_genv ~multicore:true options config in
