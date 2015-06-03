@@ -100,6 +100,8 @@ let slash_escaped_string_of_path (path: path) : string =
   String.iter (fun ch ->
     match ch with
     | '/' -> Buffer.add_string buf "zS"
+    | '\\' -> Buffer.add_string buf "zB"
+    | ':' -> Buffer.add_string buf "zC"
     | '\x00' -> Buffer.add_string buf "z0"
     | 'z' -> Buffer.add_string buf "zZ"
     | _ -> Buffer.add_char buf ch
@@ -116,6 +118,8 @@ let path_of_slash_escaped_string (str: string) : path =
         if i < length - 1 && str.[i] = 'z'
         then match str.[i+1] with
           | 'S' -> Some '/'
+          | 'B' -> Some '\\'
+          | 'C' -> Some ':'
           | '0' -> Some '\x00'
           | 'Z' -> Some 'z'
           | _ -> None
